@@ -3,8 +3,7 @@ A robust Neural Radiance Fields Implementation for 3D Reconstruction
 
 # Reading List
 
-There is no need to read all papers in an in-depth manner except when its time to implement specific methods presented inside. Note that this list is in no way exhaustive. You can easily check for new publications in the field through the citations of the original paper on [google scholar](https://scholar.google.de/scholar?hl=de&as_sdt=2005&sciodt=0,5&cites=9378169911033868166&scipsc=&q=&scisbd=1). Sort by date instead of importance.
-
+Possible Robustness and Speed-Improving Techniques discovered by different researchers. The list is in no way exhaustive.
 
 #### The one that started it all
 - [NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis](https://www.matthewtancik.com/nerf), Mildenhall et al., ECCV 2020 | [github](https://github.com/bmild/nerf) 
