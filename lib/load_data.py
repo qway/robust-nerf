@@ -45,13 +45,16 @@ def load_data(args):
     elif args.dataset_type == 'blender':
         images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
-        i_train, i_val, i_test = i_split
+        i_train, i_val, i_test = i_split     
 
         near, far = 2., 6.
 
         if images.shape[-1] == 4:
             if args.white_bkgd:
-                images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
+                temp = images[..., -1:]
+                images = images[...,:3]*temp
+                temp2 = (1.0 - temp)
+                images += temp2
             else:
                 images = images[...,:3]*images[...,-1:]
 
