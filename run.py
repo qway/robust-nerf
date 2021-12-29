@@ -268,7 +268,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
     # init batch rays sampler
     def gather_training_rays():
-        modifies_poses = model.get_modified_poses(poses[i_train])
+        modifies_poses = poses[i_train]#model.get_modified_poses(poses[i_train])
         if data_dict['irregular_shape']:
             rgb_tr_ori = [images[i].to('cpu' if cfg.data.load2gpu_on_the_fly else device) for i in i_train]
         else:
