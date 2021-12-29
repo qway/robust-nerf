@@ -235,6 +235,42 @@ class DirectVoxGO(torch.nn.Module):
         interval = interval if interval is not None else self.voxel_size_ratio
         return 1 - torch.exp(-F.softplus(density + self.act_shift) * interval)
     
+
+    ############################### BARF CODE BEGIN ##############################
+
+    def taylor_A(self,x,nth=10):
+        # Taylor expansion of sin(x)/x
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            if i>0: denom *= (2*i)*(2*i+1)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    def taylor_B(self,x,nth=10):
+        # Taylor expansion of (1-cos(x))/x**2
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            denom *= (2*i+1)*(2*i+2)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    def taylor_C(self,x,nth=10):
+        # Taylor expansion of (x-sin(x))/x**3
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            denom *= (2*i+2)*(2*i+3)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    
+    def skew_symmetric(self,w):
+        w0,w1,w2 = w.unbind(dim=-1)
+        O = torch.zeros_like(w0)
+        wx = torch.stack([torch.stack([O,-w2,w1],dim=-1),
+                          torch.stack([w2,O,-w0],dim=-1),
+                          torch.stack([-w1,w0,O],dim=-1)],dim=-2)
+        return wx
+
     def compose_pair(self,pose_a,pose_b):
         # from BARF paper
         R_a,t_a = pose_a[...,:3],pose_a[...,3:]
@@ -257,6 +293,8 @@ class DirectVoxGO(torch.nn.Module):
         V = I+B*wx+C*wx@wx
         Rt = torch.cat([R,(V@u[...,None])],dim=-1)
         return Rt
+
+    ############################### BARF CODE END ################################
 
     def get_modified_poses(self, train_poses):
         modified_poses = []
