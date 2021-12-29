@@ -233,6 +233,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
     num_voxels = model_kwargs.pop('num_voxels')
     if len(cfg_train.pg_scale) and reload_ckpt_path is None:
         num_voxels = int(num_voxels / (2**len(cfg_train.pg_scale)))
+    model_kwargs['len_data'] = len(i_train)
     model = dvgo.DirectVoxGO(
         xyz_min=xyz_min, xyz_max=xyz_max,
         num_voxels=num_voxels,
@@ -244,7 +245,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
     # init optimizer
     optimizer = utils.create_optimizer_or_freeze_model(model, cfg_train, global_step=0)
-
+    
     # load checkpoint if there is
     if reload_ckpt_path is None:
         print(f'scene_rep_reconstruction ({stage}): train from scratch')
@@ -267,6 +268,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
     # init batch rays sampler
     def gather_training_rays():
+        modifies_poses = model.get_modified_poses(poses[i_train])
         if data_dict['irregular_shape']:
             rgb_tr_ori = [images[i].to('cpu' if cfg.data.load2gpu_on_the_fly else device) for i in i_train]
         else:
@@ -275,7 +277,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         if cfg_train.ray_sampler == 'in_maskcache':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_in_maskcache_sampling(
                     rgb_tr_ori=rgb_tr_ori,
-                    train_poses=poses[i_train],
+                    train_poses=modifies_poses,
                     HW=HW[i_train], Ks=Ks[i_train],
                     ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                     flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y,
@@ -283,13 +285,13 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         elif cfg_train.ray_sampler == 'flatten':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_flatten(
                 rgb_tr_ori=rgb_tr_ori,
-                train_poses=poses[i_train],
+                train_poses=modifies_poses,
                 HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         else:
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays(
                 rgb_tr=rgb_tr_ori,
-                train_poses=poses[i_train],
+                train_poses=modifies_poses,
                 HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         index_generator = dvgo.batch_indices_generator(len(rgb_tr), cfg_train.N_rand)
@@ -317,6 +319,8 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
     global_step = -1
     for global_step in trange(1+start, 1+cfg_train.N_iters):
 
+        if global_step % cfg_train.resample_rays == 0:
+            rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
         # progress scaling checkpoint
         if global_step in cfg_train.pg_scale:
             model.scale_volume_grid(model.num_voxels * 2)

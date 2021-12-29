@@ -100,6 +100,9 @@ class DirectVoxGO(torch.nn.Module):
         else:
             self.mask_cache = None
             self.nonempty_mask = None
+        # extrinsics opt
+        self.se3_refine = torch.nn.Embedding(kwargs['len_data'], 6).to(self.xyz_min.device)
+        torch.nn.init.zeros_(self.se3_refine.weight)
 
     def _set_grid_resolution(self, num_voxels):
         # Determine grid resolution
@@ -231,6 +234,39 @@ class DirectVoxGO(torch.nn.Module):
     def activate_density(self, density, interval=None):
         interval = interval if interval is not None else self.voxel_size_ratio
         return 1 - torch.exp(-F.softplus(density + self.act_shift) * interval)
+    
+    def compose_pair(self,pose_a,pose_b):
+        # from BARF paper
+        R_a,t_a = pose_a[...,:3],pose_a[...,3:]
+        R_b,t_b = pose_b[...,:3],pose_b[...,3:]
+        R_new = R_b@R_a
+        t_new = (R_b@t_a+t_b)[...,0]
+        pose_new = torch.cat([R_new,t_new[...,None]],dim=-1)
+        return pose_new
+    
+    def se3_to_SE3(self, wu): # [...,3]
+        # from BARF paper
+        w,u = wu.split([3,3],dim=-1)
+        wx = self.skew_symmetric(w)
+        theta = w.norm(dim=-1)[...,None,None]
+        I = torch.eye(3,device=w.device,dtype=torch.float32)
+        A = self.taylor_A(theta)
+        B = self.taylor_B(theta)
+        C = self.taylor_C(theta)
+        R = I+A*wx+B*wx@wx
+        V = I+B*wx+C*wx@wx
+        Rt = torch.cat([R,(V@u[...,None])],dim=-1)
+        return Rt
+
+    def get_modified_poses(self, train_poses):
+        modified_poses = []
+        for i, c2w in enumerate(train_poses): 
+            # self.se3_refine
+            cur_se3 = self.se3_refine.weight[i]
+            refine = self.se3_to_SE3(cur_se3)
+            new_pose = self.compose_pair(refine, train_poses[i])
+            modified_poses.append(new_pose)
+        return modified_poses
 
     def grid_sampler(self, xyz, *grids, mode=None, align_corners=True):
         '''Wrapper for the interp operation'''
@@ -491,7 +527,6 @@ def get_rays_of_a_view(H, W, K, c2w, ndc, inverse_y, flip_x, flip_y, mode='cente
     return rays_o, rays_d, viewdirs
 
 
-@torch.no_grad()
 def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y):
     print('get_training_rays: start')
     assert len(np.unique(HW, axis=0)) == 1
@@ -516,7 +551,6 @@ def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_
     return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
 
 
-@torch.no_grad()
 def get_training_rays_flatten(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y):
     print('get_training_rays_flatten: start')
     assert len(rgb_tr_ori) == len(train_poses) and len(rgb_tr_ori) == len(Ks) and len(rgb_tr_ori) == len(HW)
@@ -548,7 +582,6 @@ def get_training_rays_flatten(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, f
     return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
 
 
-@torch.no_grad()
 def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y, model, render_kwargs):
     print('get_training_rays_in_maskcache_sampling: start')
     assert len(rgb_tr_ori) == len(train_poses) and len(rgb_tr_ori) == len(Ks) and len(rgb_tr_ori) == len(HW)
