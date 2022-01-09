@@ -134,3 +134,8 @@ dmypy.json
 *.dae
 data
 logs
+
+# Poetry
+poetry.lock
+pyproject.toml
+
