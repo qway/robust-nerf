@@ -231,12 +231,14 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
     # init model
     model_kwargs = copy.deepcopy(cfg_model)
     num_voxels = model_kwargs.pop('num_voxels')
+    num_images = len(data_dict["i_train"])
     if len(cfg_train.pg_scale) and reload_ckpt_path is None:
         num_voxels = int(num_voxels / (2**len(cfg_train.pg_scale)))
     model = dvgo.DirectVoxGO(
         xyz_min=xyz_min, xyz_max=xyz_max,
         num_voxels=num_voxels,
         mask_cache_path=coarse_ckpt_path,
+        num_images=num_images,
         **model_kwargs)
     if cfg_model.maskout_near_cam_vox:
         model.maskout_near_cam_vox(poses[i_train,:3,3], near)
@@ -352,6 +354,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
         # gradient descent step
         optimizer.zero_grad(set_to_none=True)
+
         loss = cfg_train.weight_main * F.mse_loss(render_result['rgb_marched'], target)
         psnr = utils.mse2psnr(loss.detach()).item()
         if cfg_train.weight_entropy_last > 0:
@@ -366,6 +369,8 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
             loss += cfg_train.weight_tv_density * model.density_total_variation()
         if cfg_train.weight_tv_k0>0 and global_step>cfg_train.tv_from and global_step%cfg_train.tv_every==0:
             loss += cfg_train.weight_tv_k0 * model.k0_total_variation()
+        if model.adaptive_exposure:
+            loss += cfg_train.exposure_reg_offset*torch.mean(model.offsets**2) + cfg_train.exposure_reg_scale*torch.mean((model.scale-1)**2)
         loss.backward()
         optimizer.step()
         psnr_lst.append(psnr)

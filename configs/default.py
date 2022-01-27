@@ -14,7 +14,7 @@ data = dict(
     annot_path='',                # to support co3d
     split_path='',                # to support co3d
     sequence_name='',             # to support co3d
-    load2gpu_on_the_fly=False,    # do not load all images into gpu (to save gpu memory)
+    load2gpu_on_the_fly=True,     # do not load all images into gpu (to save gpu memory)
     testskip=1,                   # subsample testset to preview results
     white_bkgd=False,             # use white background (note that some dataset don't provide alpha and with blended bg color)
     half_res=False,               # [TODO]
@@ -31,7 +31,7 @@ data = dict(
 '''
 coarse_train = dict(
     N_iters=10000,                # number of optimization steps
-    N_rand=8192,                  # batch size (number of random rays per optimization step)
+    N_rand=8192//4,                  # batch size (number of random rays per optimization step)
     lrate_density=1e-1,           # lr of density voxel grid
     lrate_k0=1e-1,                # lr of color/feature voxel grid
     lrate_rgbnet=1e-3,            # lr of the mlp to preduct view-dependent color
@@ -47,6 +47,8 @@ coarse_train = dict(
     weight_tv_density=0.0,        # weight of total variation loss of density voxel grid
     weight_tv_k0=0.0,             # weight of total variation loss of color/feature voxel grid
     pg_scale=[],                  # checkpoints for progressive scaling
+    exposure_reg_scale=0.01,      # EV regularization for scale(helps with white-balance)
+    exposure_reg_offset=0.001,    # EV regularization for offset
 )
 
 fine_train = deepcopy(coarse_train)
@@ -79,6 +81,7 @@ coarse_model_and_render = dict(
     maskout_near_cam_vox=True,    # maskout grid points that between cameras and their near planes
     world_bound_scale=1,          # rescale the BBox enclosing the scene
     stepsize=0.5,                 # sampling stepsize in volume rendering
+    adaptive_exposure=False,      # If true, adds adaptive per image exposure
 )
 
 fine_model_and_render = deepcopy(coarse_model_and_render)

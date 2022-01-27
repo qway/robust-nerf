@@ -18,7 +18,7 @@ class DirectVoxGO(torch.nn.Module):
                  fast_color_thres=0,
                  rgbnet_dim=0, rgbnet_direct=False, rgbnet_full_implicit=False,
                  rgbnet_depth=3, rgbnet_width=128,
-                 posbase_pe=5, viewbase_pe=4,
+                 posbase_pe=5, viewbase_pe=4, num_images=0, adaptive_exposure=False,
                  **kwargs):
         super(DirectVoxGO, self).__init__()
         self.register_buffer('xyz_min', torch.Tensor(xyz_min))
@@ -88,6 +88,19 @@ class DirectVoxGO(torch.nn.Module):
             nn.init.constant_(self.rgbnet[-1].bias, 0)
             print('dvgo: feature voxel grid', self.k0.shape)
             print('dvgo: mlp', self.rgbnet)
+
+        # Using adaptive-per Image exposure
+        self.adaptive_exposure = adaptive_exposure
+        self.num_images = num_images
+        if self.adaptive_exposure:
+            if not self.num_images > 0:
+                raise IOError("Amount of Images not given, cant initialize adaptive exposure parameters")
+            self.offsets = torch.nn.Parameter(torch.zeros([self.num_images, 1]))
+            self.scale = torch.nn.Parameter(torch.ones([self.num_images, 3]))
+        else:
+            self.offsets = None
+            self.scale = None
+
 
         # Using the coarse geometry if provided (used to determine known free space and unknown space)
         self.mask_cache_path = mask_cache_path
@@ -273,7 +286,7 @@ class DirectVoxGO(torch.nn.Module):
         mask_outbbox = mask_outbbox[...,None] | ((self.xyz_min>rays_pts) | (rays_pts>self.xyz_max)).any(dim=-1)
         return rays_pts, mask_outbbox
 
-    def forward(self, rays_o, rays_d, viewdirs, global_step=None, **render_kwargs):
+    def forward(self, rays_o, rays_d, viewdirs, global_step=None, img_id=-1, **render_kwargs):
         '''Volume rendering'''
 
         ret_dict = {}
@@ -313,7 +326,7 @@ class DirectVoxGO(torch.nn.Module):
 
         if self.rgbnet is None:
             # no view-depend effect
-            rgb = torch.sigmoid(k0)
+            rgb = k0
         else:
             # view-dependent color emission
             if self.rgbnet_direct:
@@ -335,10 +348,15 @@ class DirectVoxGO(torch.nn.Module):
             rgb_logit = torch.zeros(*weights.shape, 3).to(weights)
             rgb_logit[mask] = self.rgbnet(rgb_feat)
             if self.rgbnet_direct:
-                rgb = torch.sigmoid(rgb_logit)
+                rgb = rgb_logit
             else:
                 rgb_logit[mask] = rgb_logit[mask] + k0_diffuse
-                rgb = torch.sigmoid(rgb_logit)
+                rgb = rgb_logit
+
+        # Adds trainable per image exposure compensation
+        if self.adaptive_exposure and img_id >= 0:
+            rgb = rgb * self.scale[img_id] + self.offsets[img_id]
+        rgb = torch.sigmoid(rgb)
 
         # Ray marching
         rgb_marched = (weights[...,None] * rgb).sum(-2) + alphainv_cum[...,[-1]] * render_kwargs['bg']

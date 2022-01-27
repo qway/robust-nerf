@@ -73,7 +73,11 @@ def load_data(args):
 
         if images.shape[-1] == 4:
             if args.white_bkgd:
-                images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
+                # Memory efficent variant due to not allocating a new array
+                for i in range(images.shape[0]):
+                    images[i,...,:3] = images[i,...,:3]*images[i,...,-1:] + (1.-images[i,...,-1:])
+                    images = images[...,:3]
+                #images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
             else:
                 images = images[...,:3]*images[...,-1:]
 

@@ -134,3 +134,5 @@ dmypy.json
 *.dae
 data
 logs
+
+.idea
