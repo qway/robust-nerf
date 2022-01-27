@@ -268,37 +268,54 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
     # init batch rays sampler
     def gather_training_rays():
-        modifies_poses = poses[i_train]#model.get_modified_poses(poses[i_train])
+
+
+
+        modified_poses = model.get_modified_poses(poses[i_train])
         if data_dict['irregular_shape']:
             rgb_tr_ori = [images[i].to('cpu' if cfg.data.load2gpu_on_the_fly else device) for i in i_train]
         else:
             rgb_tr_ori = images[i_train].to('cpu' if cfg.data.load2gpu_on_the_fly else device)
+        subInd = torch.randn(len(modified_poses), device=modified_poses[0].device) > 1.0
+        HW_ = HW[i_train][subInd.cpu()]
+        Ks_ = Ks[i_train][subInd.cpu()]
+        rgb_tr_ori_ = rgb_tr_ori[subInd, ...]
+        modified_poses_ = [i for (i, f) in zip(modified_poses, subInd) if f]
+        # print("WELLLLLLLLLLLLLLLLLLLLLLLLLLLLL")
+        # modified_poses_[0].sum().backward() ######
+        # print(HW_.shape)
 
         if cfg_train.ray_sampler == 'in_maskcache':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_in_maskcache_sampling(
-                    rgb_tr_ori=rgb_tr_ori,
-                    train_poses=modifies_poses,
-                    HW=HW[i_train], Ks=Ks[i_train],
+                    rgb_tr_ori=rgb_tr_ori_,
+                    train_poses=modified_poses_,
+                    HW=HW_, Ks=Ks_,
                     ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                     flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y,
                     model=model, render_kwargs=render_kwargs)
         elif cfg_train.ray_sampler == 'flatten':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_flatten(
-                rgb_tr_ori=rgb_tr_ori,
-                train_poses=modifies_poses,
-                HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
+                rgb_tr_ori=rgb_tr_ori_,
+                train_poses=modified_poses_,
+                HW=HW_, Ks=Ks_, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         else:
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays(
-                rgb_tr=rgb_tr_ori,
-                train_poses=modifies_poses,
-                HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
+                rgb_tr=rgb_tr_ori_,
+                train_poses=modified_poses_,
+                HW=HW_, Ks=Ks_, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         index_generator = dvgo.batch_indices_generator(len(rgb_tr), cfg_train.N_rand)
         batch_index_sampler = lambda: next(index_generator)
         return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler
 
     rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
+    # print("HHHHHHHHHHHHHHHHHHHh")
+    # print(rays_o_tr.shape)
+    # print(rgb_tr.shape)
+    # print(rays_d_tr.shape)
+    # print(viewdirs_tr.shape)
+    # print(len(imsz))
 
     # view-count-based learning rate
     if cfg_train.pervoxel_lr:

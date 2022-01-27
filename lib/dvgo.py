@@ -101,6 +101,7 @@ class DirectVoxGO(torch.nn.Module):
             self.mask_cache = None
             self.nonempty_mask = None
         # extrinsics opt
+        self.len_data = kwargs['len_data']
         self.se3_refine = torch.nn.Embedding(kwargs['len_data'], 6).to(self.xyz_min.device)
         torch.nn.init.zeros_(self.se3_refine.weight)
 
@@ -128,6 +129,7 @@ class DirectVoxGO(torch.nn.Module):
             'mask_cache_path': self.mask_cache_path,
             'mask_cache_thres': self.mask_cache_thres,
             'fast_color_thres': self.fast_color_thres,
+            'len_data': self.len_data,
             **self.rgbnet_kwargs,
         }
 
@@ -284,13 +286,20 @@ class DirectVoxGO(torch.nn.Module):
         # from BARF paper
         w,u = wu.split([3,3],dim=-1)
         wx = self.skew_symmetric(w)
+        wxX = torch.matmul(wx, wx)
+        # print("LLLLLLLLll")
+        # print(wx.shape)
+        # print(wxX.shape)
+        # wxX.sum().backward()
         theta = w.norm(dim=-1)[...,None,None]
         I = torch.eye(3,device=w.device,dtype=torch.float32)
         A = self.taylor_A(theta)
         B = self.taylor_B(theta)
         C = self.taylor_C(theta)
-        R = I+A*wx+B*wx@wx
-        V = I+B*wx+C*wx@wx
+        R = I+A*wx+B*wxX
+        V = I+B*wx+C*wxX
+        # print("LLLLLLLLLLLLLLLLLL")
+        # R.sum().backward(retain_graph=True)
         Rt = torch.cat([R,(V@u[...,None])],dim=-1)
         return Rt
 
@@ -299,10 +308,9 @@ class DirectVoxGO(torch.nn.Module):
     def get_modified_poses(self, train_poses):
         modified_poses = []
         for i, c2w in enumerate(train_poses): 
-            # self.se3_refine
             cur_se3 = self.se3_refine.weight[i]
             refine = self.se3_to_SE3(cur_se3)
-            new_pose = self.compose_pair(refine, train_poses[i])
+            new_pose = self.compose_pair(refine, c2w)
             modified_poses.append(new_pose)
         return modified_poses
 
