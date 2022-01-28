@@ -7,6 +7,7 @@ from .load_blendedmvs import load_blendedmvs_data
 from .load_tankstemple import load_tankstemple_data
 from .load_deepvoxels import load_dv_data
 from .load_co3d import load_co3d_data
+from .load_nerfies import load_nerfies_data
 
 
 def load_data(args):
@@ -44,6 +45,22 @@ def load_data(args):
 
     elif args.dataset_type == 'blender':
         images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.testskip)
+        print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
+        i_train, i_val, i_test = i_split     
+
+        near, far = 2., 6.
+
+        if images.shape[-1] == 4:
+            if args.white_bkgd:
+                temp = images[..., -1:]
+                images = images[...,:3]*temp
+                temp2 = (1.0 - temp)
+                images += temp2
+            else:
+                images = images[...,:3]*images[...,-1:]
+
+    elif args.dataset_type == 'nerfies':
+        images, poses, render_poses, hwf, i_split = load_nerfies_data(args.datadir, args.half_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split     
 

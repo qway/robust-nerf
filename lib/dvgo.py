@@ -423,6 +423,15 @@ def total_variation(v, mask=None):
 ''' Ray and batch
 '''
 def get_rays(H, W, K, c2w, inverse_y, flip_x, flip_y, mode='center'):
+    # print(H)
+    # print(W)
+    # print(K)
+    # print(c2w)
+    # print(inverse_y)
+    # print(flip_x)
+    # print(flip_y)
+    # print(mode)
+    # raise NotImplemented()
     i, j = torch.meshgrid(
         torch.linspace(0, W-1, W, device=c2w.device),
         torch.linspace(0, H-1, H, device=c2w.device))  # pytorch's meshgrid has indexing='ij'
