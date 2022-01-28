@@ -98,7 +98,7 @@ def load_nerfies_data(basedir, half_res=False, testskip=1):
     imgs = (np.array(imgs) / 255.).astype(np.float32) # keep all 4 channels (RGBA)
 
     def orbit_path_from_id(id):
-        return os.path.join(basedir, "camera-paths", "orbit-mild", '{}.json'.format(id))
+        return os.path.join(basedir, "camera", '{}.json'.format(id))
     orbit_paths = [ orbit_path_from_id(id) for id in permuted_ids ]
 
     camera_orbit = []
@@ -107,7 +107,7 @@ def load_nerfies_data(basedir, half_res=False, testskip=1):
             camera_orbit.append(json.load(fp))
     def to_transformation_matrix(orbit_pos):
         transformation_matrix = np.zeros((4,4))
-        transformation_matrix[:3, :3] = orbit_pos["orientation"]
+        transformation_matrix[:3, :3] = np.array(orbit_pos["orientation"])
         transformation_matrix[:3, 3] = orbit_pos["position"]
         transformation_matrix[3,3] = 1
         return transformation_matrix
