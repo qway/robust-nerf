@@ -268,66 +268,53 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
     # init batch rays sampler
     def gather_training_rays():
-
-
-
-        modified_poses = model.get_modified_poses(poses[i_train])
         if data_dict['irregular_shape']:
             rgb_tr_ori = [images[i].to('cpu' if cfg.data.load2gpu_on_the_fly else device) for i in i_train]
         else:
             rgb_tr_ori = images[i_train].to('cpu' if cfg.data.load2gpu_on_the_fly else device)
-        subInd = torch.randn(len(modified_poses), device=modified_poses[0].device) > 1.0
-        HW_ = HW[i_train][subInd.cpu()]
-        Ks_ = Ks[i_train][subInd.cpu()]
-        rgb_tr_ori_ = rgb_tr_ori[subInd, ...]
-        modified_poses_ = [i for (i, f) in zip(modified_poses, subInd) if f]
-        # print("WELLLLLLLLLLLLLLLLLLLLLLLLLLLLL")
-        # modified_poses_[0].sum().backward() ######
-        # print(HW_.shape)
 
         if cfg_train.ray_sampler == 'in_maskcache':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_in_maskcache_sampling(
-                    rgb_tr_ori=rgb_tr_ori_,
-                    train_poses=modified_poses_,
-                    HW=HW_, Ks=Ks_,
+                    rgb_tr_ori=rgb_tr_ori,
+                    train_poses=poses[i_train],
+                    HW=HW, Ks=Ks,
                     ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                     flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y,
                     model=model, render_kwargs=render_kwargs)
         elif cfg_train.ray_sampler == 'flatten':
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_flatten(
-                rgb_tr_ori=rgb_tr_ori_,
-                train_poses=modified_poses_,
-                HW=HW_, Ks=Ks_, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
+                rgb_tr_ori=rgb_tr_ori,
+                train_poses=poses[i_train],
+                HW=HW, Ks=Ks, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         else:
-            rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays(
-                rgb_tr=rgb_tr_ori_,
-                train_poses=modified_poses_,
-                HW=HW_, Ks=Ks_, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
+            # rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz 
+            rgb_tr, dirs_tr, imsz = dvgo.get_training_rays(
+                rgb_tr=rgb_tr_ori,
+                train_poses=poses[i_train],
+                HW=HW, Ks=Ks, ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
         index_generator = dvgo.batch_indices_generator(len(rgb_tr), cfg_train.N_rand)
         batch_index_sampler = lambda: next(index_generator)
-        return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler
+        # return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler
+        return rgb_tr, dirs_tr, imsz, batch_index_sampler
 
-    rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
-    # print("HHHHHHHHHHHHHHHHHHHh")
-    # print(rays_o_tr.shape)
-    # print(rgb_tr.shape)
-    # print(rays_d_tr.shape)
-    # print(viewdirs_tr.shape)
-    # print(len(imsz))
+    # rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
+    rgb_tr, dirs_tr, imsz, batch_index_sampler = gather_training_rays()
 
     # view-count-based learning rate
     if cfg_train.pervoxel_lr:
-        def per_voxel_init():
-            cnt = model.voxel_count_views(
-                    rays_o_tr=rays_o_tr, rays_d_tr=rays_d_tr, imsz=imsz, near=near, far=far,
-                    stepsize=cfg_model.stepsize, downrate=cfg_train.pervoxel_lr_downrate,
-                    irregular_shape=data_dict['irregular_shape'])
-            optimizer.set_pervoxel_lr(cnt)
-            with torch.no_grad():
-                model.density[cnt <= 2] = -100
-        per_voxel_init()
+        pass
+        # temporarily removed this part (for simplicity)
+        # def per_voxel_init():
+        #     cnt = model.voxel_count_views(
+        #             rays_o_tr=rays_o_tr, rays_d_tr=rays_d_tr, imsz=imsz, near=near, far=far,
+        #             stepsize=cfg_model.stepsize, downrate=cfg_train.pervoxel_lr_downrate,
+        #             irregular_shape=data_dict['irregular_shape'])
+        #     optimizer.set_pervoxel_lr(cnt)
+        #     with torch.no_grad():
+        #         model.density[cnt <= 2] = -100
+        # per_voxel_init()
 
     # GOGO
     torch.cuda.empty_cache()
@@ -337,7 +324,8 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
     for global_step in trange(1+start, 1+cfg_train.N_iters):
 
         if global_step % cfg_train.resample_rays == 0:
-            rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
+            # rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
+            rgb_tr, dirs_tr, imsz, batch_index_sampler = gather_training_rays()
         # progress scaling checkpoint
         if global_step in cfg_train.pg_scale:
             model.scale_volume_grid(model.num_voxels * 2)
@@ -348,20 +336,29 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         if cfg_train.ray_sampler in ['flatten', 'in_maskcache']:
             sel_i = batch_index_sampler()
             target = rgb_tr[sel_i]
-            rays_o = rays_o_tr[sel_i]
-            rays_d = rays_d_tr[sel_i]
-            viewdirs = viewdirs_tr[sel_i]
+            # rays_o = rays_o_tr[sel_i]
+            # rays_d = rays_d_tr[sel_i]
+            # viewdirs = viewdirs_tr[sel_i]
+            dirs = dirs_tr[sel_i]
         elif cfg_train.ray_sampler == 'random':
             sel_b = torch.randint(rgb_tr.shape[0], [cfg_train.N_rand])
+            sel_b_unique = sel_b.unique()
+            modified_poses = model.get_modified_poses(poses[i_train][sel_b_unique], sel_b_unique)
+
             sel_r = torch.randint(rgb_tr.shape[1], [cfg_train.N_rand])
             sel_c = torch.randint(rgb_tr.shape[2], [cfg_train.N_rand])
             target = rgb_tr[sel_b, sel_r, sel_c]
-            rays_o = rays_o_tr[sel_b, sel_r, sel_c]
-            rays_d = rays_d_tr[sel_b, sel_r, sel_c]
-            viewdirs = viewdirs_tr[sel_b, sel_r, sel_c]
+            dirs = dirs_tr[sel_b, sel_r, sel_c]
+            rays_o = torch.zeros_like(dirs)#rays_o_tr[sel_b, sel_r, sel_c]
+            rays_d = torch.zeros_like(dirs)#rays_d_tr[sel_b, sel_r, sel_c]
+            viewdirs = torch.zeros_like(dirs)#viewdirs_tr[sel_b, sel_r, sel_c]
+
+            for i, c2w in zip(sel_b_unique, modified_poses):
+                rays_d[sel_b==i] = torch.sum(dirs[sel_b==i, ..., np.newaxis, :] * c2w[:3,:3], -1)
+                rays_o = c2w[:3,3].expand(rays_d.shape)
+                viewdirs[sel_b==i] = rays_d[sel_b==i] / rays_d[sel_b==i].norm(dim=-1, keepdim=True)
         else:
             raise NotImplementedError
-
         if cfg.data.load2gpu_on_the_fly:
             target = target.to(device)
             rays_o = rays_o.to(device)
@@ -388,6 +385,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         if cfg_train.weight_tv_k0>0 and global_step>cfg_train.tv_from and global_step%cfg_train.tv_every==0:
             loss += cfg_train.weight_tv_k0 * model.k0_total_variation()
         loss.backward()
+
         optimizer.step()
         psnr_lst.append(psnr)
 

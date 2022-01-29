@@ -287,10 +287,6 @@ class DirectVoxGO(torch.nn.Module):
         w,u = wu.split([3,3],dim=-1)
         wx = self.skew_symmetric(w)
         wxX = torch.matmul(wx, wx)
-        # print("LLLLLLLLll")
-        # print(wx.shape)
-        # print(wxX.shape)
-        # wxX.sum().backward()
         theta = w.norm(dim=-1)[...,None,None]
         I = torch.eye(3,device=w.device,dtype=torch.float32)
         A = self.taylor_A(theta)
@@ -298,16 +294,14 @@ class DirectVoxGO(torch.nn.Module):
         C = self.taylor_C(theta)
         R = I+A*wx+B*wxX
         V = I+B*wx+C*wxX
-        # print("LLLLLLLLLLLLLLLLLL")
-        # R.sum().backward(retain_graph=True)
         Rt = torch.cat([R,(V@u[...,None])],dim=-1)
         return Rt
 
     ############################### BARF CODE END ################################
 
-    def get_modified_poses(self, train_poses):
+    def get_modified_poses(self, train_poses, indices):
         modified_poses = []
-        for i, c2w in enumerate(train_poses): 
+        for i, c2w in zip(indices, train_poses): 
             cur_se3 = self.se3_refine.weight[i]
             refine = self.se3_to_SE3(cur_se3)
             new_pose = self.compose_pair(refine, c2w)
@@ -502,6 +496,36 @@ def total_variation(v, mask=None):
     return (tv2.mean() + tv3.mean() + tv4.mean()) / 3
 
 
+def get_rays_po(H, W, K, c2w, inverse_y, flip_x, flip_y, mode='center'):
+    i, j = torch.meshgrid(
+        torch.linspace(0, W-1, W, device=c2w.device),
+        torch.linspace(0, H-1, H, device=c2w.device))  # pytorch's meshgrid has indexing='ij'
+    i = i.t().float()
+    j = j.t().float()
+    if mode == 'lefttop':
+        pass
+    elif mode == 'center':
+        i, j = i+0.5, j+0.5
+    elif mode == 'random':
+        i = i+torch.rand_like(i)
+        j = j+torch.rand_like(j)
+    else:
+        raise NotImplementedError
+
+    if flip_x:
+        i = i.flip((1,))
+    if flip_y:
+        j = j.flip((0,))
+    if inverse_y:
+        dirs = torch.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], torch.ones_like(i)], -1)
+    else:
+        dirs = torch.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -torch.ones_like(i)], -1)
+    # Rotate ray directions from camera frame to the world frame
+    # rays_d = torch.sum(dirs[..., np.newaxis, :] * c2w[:3,:3], -1)  # dot product, equals to: [c2w.dot(dir) for dir in dirs]
+    # Translate camera frame's origin to the world frame. It is the origin of all rays.
+    # rays_o = c2w[:3,3].expand(rays_d.shape)
+    return dirs
+
 ''' Ray and batch
 '''
 def get_rays(H, W, K, c2w, inverse_y, flip_x, flip_y, mode='center'):
@@ -572,7 +596,14 @@ def get_rays_of_a_view(H, W, K, c2w, ndc, inverse_y, flip_x, flip_y, mode='cente
         rays_o, rays_d = ndc_rays(H, W, K[0][0], 1., rays_o, rays_d)
     return rays_o, rays_d, viewdirs
 
+def get_rays_of_a_view_po(H, W, K, c2w, ndc, inverse_y, flip_x, flip_y, mode='center'):
+    # rays_o, rays_d = get_rays(H, W, K, c2w, inverse_y=inverse_y, flip_x=flip_x, flip_y=flip_y, mode=mode)
+    # viewdirs = rays_d / rays_d.norm(dim=-1, keepdim=True)
+    # if ndc:
+    #     rays_o, rays_d = ndc_rays(H, W, K[0][0], 1., rays_o, rays_d)
+    return get_rays_po(H, W, K, c2w, inverse_y=inverse_y, flip_x=flip_x, flip_y=flip_y, mode=mode)
 
+@torch.no_grad()
 def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y):
     print('get_training_rays: start')
     assert len(np.unique(HW, axis=0)) == 1
@@ -581,22 +612,26 @@ def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_
     H, W = HW[0]
     K = Ks[0]
     eps_time = time.time()
-    rays_o_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
-    rays_d_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
-    viewdirs_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
+    # rays_o_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
+    # rays_d_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
+    # viewdirs_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
+    dirs_tr = torch.zeros([len(rgb_tr), H, W, 3], device=rgb_tr.device)
     imsz = [1] * len(rgb_tr)
     for i, c2w in enumerate(train_poses):
-        rays_o, rays_d, viewdirs = get_rays_of_a_view(
+        # rays_o, rays_d, viewdirs 
+        dirs = get_rays_of_a_view_po(
                 H=H, W=W, K=K, c2w=c2w, ndc=ndc, inverse_y=inverse_y, flip_x=flip_x, flip_y=flip_y)
-        rays_o_tr[i].copy_(rays_o.to(rgb_tr.device))
-        rays_d_tr[i].copy_(rays_d.to(rgb_tr.device))
-        viewdirs_tr[i].copy_(viewdirs.to(rgb_tr.device))
-        del rays_o, rays_d, viewdirs
+        # rays_o_tr[i].copy_(rays_o.to(rgb_tr.device))
+        # rays_d_tr[i].copy_(rays_d.to(rgb_tr.device))
+        # viewdirs_tr[i].copy_(viewdirs.to(rgb_tr.device))
+        dirs_tr[i].copy_(dirs.to(rgb_tr.device))
+        del dirs #rays_o, rays_d, viewdirs
     eps_time = time.time() - eps_time
     print('get_training_rays: finish (eps time:', eps_time, 'sec)')
-    return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
+    # return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
+    return rgb_tr, dirs_tr, imsz
 
-
+@torch.no_grad()
 def get_training_rays_flatten(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y):
     print('get_training_rays_flatten: start')
     assert len(rgb_tr_ori) == len(train_poses) and len(rgb_tr_ori) == len(Ks) and len(rgb_tr_ori) == len(HW)
@@ -627,7 +662,7 @@ def get_training_rays_flatten(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, f
     print('get_training_rays_flatten: finish (eps time:', eps_time, 'sec)')
     return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
 
-
+@torch.no_grad()
 def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y, model, render_kwargs):
     print('get_training_rays_in_maskcache_sampling: start')
     assert len(rgb_tr_ori) == len(train_poses) and len(rgb_tr_ori) == len(Ks) and len(rgb_tr_ori) == len(HW)

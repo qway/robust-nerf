@@ -1,4 +1,5 @@
 from copy import deepcopy
+from functools import lru_cache
 
 expname = None                    # experiment name
 basedir = './logs/'               # where to store ckpts and logs
@@ -35,8 +36,9 @@ coarse_train = dict(
     lrate_density=1e-1,           # lr of density voxel grid
     lrate_k0=1e-1,                # lr of color/feature voxel grid
     lrate_rgbnet=1e-3,            # lr of the mlp to preduct view-dependent color
+    lrate_se3_refine=1e-5,          # robust edit: lr for modifying poses
     lrate_decay=20,               # lr decay by 0.1 after every lrate_decay*1000 steps
-    pervoxel_lr=True,             # view-count-based lr
+    pervoxel_lr=False,             # view-count-based lr
     pervoxel_lr_downrate=1,       # downsampled image for computing view-count-based lr
     ray_sampler='random',         # ray sampling strategies
     weight_main=1.0,              # weight of photometric loss
@@ -46,8 +48,7 @@ coarse_train = dict(
     tv_from=0,                    # count total variation loss from tv_from step
     weight_tv_density=0.0,        # weight of total variation loss of density voxel grid
     weight_tv_k0=0.0,             # weight of total variation loss of color/feature voxel grid
-    pg_scale=[],                  # checkpoints for progressive scaling
-    resample_rays=50
+    pg_scale=[]                  # checkpoints for progressive scaling
 )
 
 fine_train = deepcopy(coarse_train)
