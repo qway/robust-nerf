@@ -1,5 +1,4 @@
 from copy import deepcopy
-from functools import lru_cache
 
 expname = None                    # experiment name
 basedir = './logs/'               # where to store ckpts and logs
