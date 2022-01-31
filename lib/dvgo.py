@@ -88,6 +88,10 @@ class DirectVoxGO(torch.nn.Module):
             nn.init.constant_(self.rgbnet[-1].bias, 0)
             print('dvgo: feature voxel grid', self.k0.shape)
             print('dvgo: mlp', self.rgbnet)
+        
+        self.len_data = kwargs['len_data']
+        self.se3_refine = torch.nn.Embedding(kwargs['len_data'], 6).to(self.xyz_min.device)
+        torch.nn.init.zeros_(self.se3_refine.weight)
 
         # Using the coarse geometry if provided (used to determine known free space and unknown space)
         self.mask_cache_path = mask_cache_path
@@ -125,6 +129,7 @@ class DirectVoxGO(torch.nn.Module):
             'mask_cache_path': self.mask_cache_path,
             'mask_cache_thres': self.mask_cache_thres,
             'fast_color_thres': self.fast_color_thres,
+            'len_data': self.len_data,  
             **self.rgbnet_kwargs,
         }
 
@@ -231,6 +236,76 @@ class DirectVoxGO(torch.nn.Module):
     def activate_density(self, density, interval=None):
         interval = interval if interval is not None else self.voxel_size_ratio
         return 1 - torch.exp(-F.softplus(density + self.act_shift) * interval)
+
+    ############################### BARF CODE BEGIN ##############################
+
+    def taylor_A(self,x,nth=10):
+        # Taylor expansion of sin(x)/x
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            if i>0: denom *= (2*i)*(2*i+1)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    def taylor_B(self,x,nth=10):
+        # Taylor expansion of (1-cos(x))/x**2
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            denom *= (2*i+1)*(2*i+2)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    def taylor_C(self,x,nth=10):
+        # Taylor expansion of (x-sin(x))/x**3
+        ans = torch.zeros_like(x)
+        denom = 1.
+        for i in range(nth+1):
+            denom *= (2*i+2)*(2*i+3)
+            ans = ans+(-1)**i*x**(2*i)/denom
+        return ans
+    
+    def skew_symmetric(self,w):
+        w0,w1,w2 = w.unbind(dim=-1)
+        O = torch.zeros_like(w0)
+        wx = torch.stack([torch.stack([O,-w2,w1],dim=-1),
+                          torch.stack([w2,O,-w0],dim=-1),
+                          torch.stack([-w1,w0,O],dim=-1)],dim=-2)
+        return wx
+
+    def compose_pair(self,pose_a,pose_b):
+        # from BARF paper
+        R_a,t_a = pose_a[...,:3],pose_a[...,3:]
+        R_b,t_b = pose_b[...,:3],pose_b[...,3:]
+        R_new = R_b@R_a
+        t_new = (R_b@t_a+t_b)[...,0]
+        pose_new = torch.cat([R_new,t_new[...,None]],dim=-1)
+        return pose_new
+    
+    def se3_to_SE3(self, wu): # [...,3]
+        # from BARF paper
+        w,u = wu.split([3,3],dim=-1)
+        wx = self.skew_symmetric(w)
+        wxX = torch.matmul(wx, wx)
+        theta = w.norm(dim=-1)[...,None,None]
+        I = torch.eye(3,device=w.device,dtype=torch.float32)
+        A = self.taylor_A(theta)
+        B = self.taylor_B(theta)
+        C = self.taylor_C(theta)
+        R = I+A*wx+B*wxX
+        V = I+B*wx+C*wxX
+        Rt = torch.cat([R,(V@u[...,None])],dim=-1)
+        return Rt
+
+    ############################### BARF CODE END ################################
+
+    def get_modified_poses(self, train_poses, indices):
+        modified_poses = []
+        for i, c2w in zip(indices, train_poses): 
+            cur_se3 = self.se3_refine.weight[i]
+            refine = self.se3_to_SE3(cur_se3)
+            new_pose = self.compose_pair(refine, c2w)
+            modified_poses.append(new_pose)
+        return modified_poses
 
     def grid_sampler(self, xyz, *grids, mode=None, align_corners=True):
         '''Wrapper for the interp operation'''

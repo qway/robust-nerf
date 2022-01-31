@@ -36,6 +36,7 @@ coarse_train = dict(
     lrate_k0=1e-1,                # lr of color/feature voxel grid
     lrate_rgbnet=1e-3,            # lr of the mlp to preduct view-dependent color
     lrate_camera=1e-3,            # lr of the camera model parameters
+    lrate_se3_refine=1e-5,        # robust edit: lr for modifying poses
     lrate_decay=20,               # lr decay by 0.1 after every lrate_decay*1000 steps
     pervoxel_lr=True,             # view-count-based lr
     pervoxel_lr_downrate=1,       # downsampled image for computing view-count-based lr
