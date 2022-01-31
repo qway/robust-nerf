@@ -165,7 +165,7 @@ def adam(params: List[Tensor],
             param.addcdiv_(exp_avg, denom, value=-step_size)
 
 
-def create_optimizer_or_freeze_model(model, cfg_train, global_step):
+def create_optimizer_or_freeze_model(model, camera_model, cfg_train, global_step):
     decay_steps = cfg_train.lrate_decay * 1000
     decay_factor = 0.1 ** (global_step/decay_steps)
 
@@ -175,8 +175,17 @@ def create_optimizer_or_freeze_model(model, cfg_train, global_step):
             continue
         k = k[len('lrate_'):]
 
-        if not hasattr(model, k):
+        if not hasattr(model, k) and k != "camera":
             continue
+
+        if k == "camera":
+            lr = getattr(cfg_train, f'lrate_{k}') * decay_factor
+            print(f'create_optimizer_or_freeze_model: camera params lr {lr}')
+            param_group.append({'params': camera_model.intrinsics_initial, 'lr': lr})
+            param_group.append({'params': camera_model.intrinsics_noise, 'lr': lr})
+            param_group.append({'params': camera_model.ray_o_noise, 'lr': lr})
+            param_group.append({'params': camera_model.ray_d_noise, 'lr': lr})
+            continue 
 
         param = getattr(model, k)
         if param is None:
@@ -197,13 +206,14 @@ def create_optimizer_or_freeze_model(model, cfg_train, global_step):
 
 ''' Checkpoint utils
 '''
-def load_checkpoint(model, optimizer, ckpt_path, no_reload_optimizer):
+def load_checkpoint(model, optimizer, camera_model, ckpt_path, no_reload_optimizer):
     ckpt = torch.load(ckpt_path)
     start = ckpt['global_step']
     model.load_state_dict(ckpt['model_state_dict'])
     if not no_reload_optimizer:
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-    return model, optimizer, start
+    camera_model.load_state_dict(ckpt['camera_model_state_dict'])
+    return model, optimizer, start, camera_model
 
 
 def load_model(model_class, ckpt_path):
@@ -211,6 +221,11 @@ def load_model(model_class, ckpt_path):
     model = model_class(**ckpt['model_kwargs'])
     model.load_state_dict(ckpt['model_state_dict'])
     return model
+
+def load_camera_model(camera_model, ckpt_path):
+    ckpt = torch.load(ckpt_path)
+    camera_model.load_state_dict(ckpt['camera_model_state_dict'])
+    return camera_model
 
 
 ''' Evaluation metrics (ssim, lpips)

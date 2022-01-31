@@ -491,6 +491,87 @@ def get_rays_of_a_view(H, W, K, c2w, ndc, inverse_y, flip_x, flip_y, mode='cente
     return rays_o, rays_d, viewdirs
 
 
+
+def get_rays_kps_use_camera(H, W, camera_model, extrinsic, ndc, inverse_y, flip_x, flip_y, kps_list=None, mode='lefttop'):
+    
+    if kps_list is None:
+        kps_list = torch.stack(
+                torch.meshgrid(
+                    torch.linspace(0, W - 1, W),
+                    torch.linspace(0, H - 1, H), 
+                ),
+                -1
+            ).reshape([-1, 2])
+
+    
+    assert kps_list[:, 0].max() < W
+    assert kps_list[:, 1].max() < H
+
+    if flip_x:
+        raise NotImplementedError
+    if flip_y:
+        raise NotImplementedError
+
+
+    kps_list_expand = torch.stack(
+        [kps_list[:, 0], kps_list[:, 1],
+         torch.ones_like(kps_list[:, 0])],
+        dim=-1).float()
+
+
+    intrinsics_inv = torch.inverse(camera_model.get_intrinsic()[:3, :3])
+    
+    dirs = torch.einsum("ij, kj -> ik", kps_list_expand.float(),
+                        intrinsics_inv)
+    if not inverse_y:
+        dirs[:, 1:3] = -dirs[:, 1:3]
+
+    if extrinsic.dim() == 3:
+        rays_d = torch.sum(dirs[..., np.newaxis, :] * extrinsic[:, :3, :3], -1)
+        rays_o = extrinsic[:, :3, -1]
+    else:
+        rays_d = torch.sum(dirs[..., np.newaxis, :] * extrinsic[:3, :3], -1)
+        rays_o = extrinsic[:3, -1].expand(rays_d.shape)
+
+    if hasattr(camera_model, "ray_o_noise"):
+        kps_list = kps_list.long()
+        ray_o_noise = camera_model.get_ray_o_noise().reshape(H, W, 3)
+        ray_o_noise_kps = ray_o_noise[kps_list[:, 1], kps_list[:, 0]]
+        rays_o = rays_o + ray_o_noise_kps
+
+    if hasattr(camera_model, "ray_d_noise"):
+        kps_list = kps_list.long()
+        ray_d_noise = camera_model.get_ray_d_noise().reshape(H, W, 3)
+        ray_d_noise_kps = ray_d_noise[kps_list[:, 1], kps_list[:, 0]]
+
+        rays_d = rays_d + ray_d_noise_kps
+        rays_d = rays_d / (rays_d.norm(dim=1)[:, None] + 1e-10)
+
+    viewdirs = rays_d / rays_d.norm(dim=-1, keepdim=True)
+
+    if ndc:
+        rays_o, rays_d = ndc_rays(H, W, camera_model.get_intrinsic()[0][0], 1., rays_o, rays_d)
+
+    return rays_o, rays_d, viewdirs
+
+def get_rays_kps_use_camera_in_maskcache_sampling(H, W, camera_model, extrinsic, ndc, inverse_y, flip_x, flip_y, model, render_kwargs, kps_list=None, mode='lefttop'):
+    rays_o, rays_d, viewdirs = get_rays_kps_use_camera(H, W, camera_model, extrinsic, ndc, inverse_y, flip_x, flip_y, kps_list, mode='lefttop')
+
+    DEVICE = rays_o.device
+    CHUNK = 64
+
+    # mask rays
+    mask = torch.ones(rays_o.shape[0], device=DEVICE, dtype=torch.bool) 
+    for i in range(0, rays_o.shape[0], CHUNK):
+        rays_pts, mask_outbbox = model.sample_ray(
+                    rays_o=rays_o[i:i+CHUNK], rays_d=rays_d[i:i+CHUNK], **render_kwargs)
+        mask_outbbox[~mask_outbbox] |= (~model.mask_cache(rays_pts[~mask_outbbox]))
+        mask[i:i+CHUNK] &= (~mask_outbbox).any(-1).to(DEVICE)
+    
+
+    return rays_o[mask], rays_d[mask], viewdirs[mask], mask
+
+
 @torch.no_grad()
 def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y):
     print('get_training_rays: start')
@@ -514,6 +595,9 @@ def get_training_rays(rgb_tr, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_
     eps_time = time.time() - eps_time
     print('get_training_rays: finish (eps time:', eps_time, 'sec)')
     return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
+
+
+
 
 
 @torch.no_grad()
@@ -589,6 +673,7 @@ def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc
     eps_time = time.time() - eps_time
     print('get_training_rays_in_maskcache_sampling: finish (eps time:', eps_time, 'sec)')
     return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
+
 
 
 def batch_indices_generator(N, BS):
