@@ -375,7 +375,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         if cfg_train.weight_tv_k0>0 and global_step>cfg_train.tv_from and global_step%cfg_train.tv_every==0:
             loss += cfg_train.weight_tv_k0 * model.k0_total_variation()
         if model.adaptive_exposure:
-            loss += cfg_train.exposure_reg_offset*torch.mean(model.offsets)**2 + cfg_train.exposure_reg_scale*torch.mean((model.scale-1)**2)
+            loss += cfg_train.exposure_reg_offset*torch.abs(torch.mean(model.offsets)) + cfg_train.exposure_reg_scale*torch.mean((model.scale-1)**2)
         loss.backward()
         optimizer.step()
         psnr_lst.append(psnr)
