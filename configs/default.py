@@ -36,7 +36,7 @@ coarse_train = dict(
     lrate_k0=1e-1,                # lr of color/feature voxel grid
     lrate_rgbnet=1e-3,            # lr of the mlp to preduct view-dependent color
     lrate_decay=20,               # lr decay by 0.1 after every lrate_decay*1000 steps
-    pervoxel_lr=True,             # view-count-based lr
+    pervoxel_lr=False,             # view-count-based lr
     pervoxel_lr_downrate=1,       # downsampled image for computing view-count-based lr
     ray_sampler='random',         # ray sampling strategies
     weight_main=1.0,              # weight of photometric loss
@@ -47,8 +47,10 @@ coarse_train = dict(
     weight_tv_density=0.0,        # weight of total variation loss of density voxel grid
     weight_tv_k0=0.0,             # weight of total variation loss of color/feature voxel grid
     pg_scale=[],                  # checkpoints for progressive scaling
-    exposure_reg_scale=0.01,      # EV regularization for scale(helps with white-balance)
-    exposure_reg_offset=0.001,    # EV regularization for offset
+    exposure_reg_scale=1,         # EV regularization for scale(helps with white-balance)
+    exposure_reg_offset=0.01,     # EV regularization for offset
+    lrate_scale=1e-3,
+    lrate_offsets=1e-3,
 )
 
 fine_train = deepcopy(coarse_train)
@@ -60,6 +62,9 @@ fine_train.update(dict(
     weight_rgbper=0.01,
     pg_scale=[1000, 2000, 3000],
 ))
+# Remove the LR for the adaptive exposure part, so they do not get touched in the fine part(uses results from coarse)
+fine_train.pop("lrate_scale")
+fine_train.pop("lrate_offsets")
 
 ''' Template of model and rendering options
 '''

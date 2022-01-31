@@ -208,8 +208,8 @@ def load_checkpoint(model, optimizer, ckpt_path, no_reload_optimizer):
 
 def load_model(model_class, ckpt_path):
     ckpt = torch.load(ckpt_path)
-    model = model_class(**ckpt['model_kwargs'])
-    model.load_state_dict(ckpt['model_state_dict'])
+    model : torch.nn.Module = model_class(**ckpt['model_kwargs'])
+    model.load_state_dict(ckpt['model_state_dict'], strict=False)
     return model
 
 

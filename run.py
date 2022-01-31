@@ -275,7 +275,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
             rgb_tr_ori = images[i_train].to('cpu' if cfg.data.load2gpu_on_the_fly else device)
 
         if cfg_train.ray_sampler == 'in_maskcache':
-            rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays_in_maskcache_sampling(
+            rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, img_tr = dvgo.get_training_rays_in_maskcache_sampling(
                     rgb_tr_ori=rgb_tr_ori,
                     train_poses=poses[i_train],
                     HW=HW[i_train], Ks=Ks[i_train],
@@ -288,17 +288,19 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
                 train_poses=poses[i_train],
                 HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
+            img_tr = 0
         else:
             rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz = dvgo.get_training_rays(
                 rgb_tr=rgb_tr_ori,
                 train_poses=poses[i_train],
                 HW=HW[i_train], Ks=Ks[i_train], ndc=cfg.data.ndc, inverse_y=cfg.data.inverse_y,
                 flip_x=cfg.data.flip_x, flip_y=cfg.data.flip_y)
+            img_tr = 0
         index_generator = dvgo.batch_indices_generator(len(rgb_tr), cfg_train.N_rand)
         batch_index_sampler = lambda: next(index_generator)
-        return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler
+        return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, img_tr, imsz, batch_index_sampler
 
-    rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, batch_index_sampler = gather_training_rays()
+    rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, img_tr, imsz, batch_index_sampler = gather_training_rays()
 
     # view-count-based learning rate
     if cfg_train.pervoxel_lr:
@@ -332,6 +334,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
             rays_o = rays_o_tr[sel_i]
             rays_d = rays_d_tr[sel_i]
             viewdirs = viewdirs_tr[sel_i]
+            img_ids = img_tr[sel_i]
         elif cfg_train.ray_sampler == 'random':
             sel_b = torch.randint(rgb_tr.shape[0], [cfg_train.N_rand])
             sel_r = torch.randint(rgb_tr.shape[1], [cfg_train.N_rand])
@@ -340,6 +343,8 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
             rays_o = rays_o_tr[sel_b, sel_r, sel_c]
             rays_d = rays_d_tr[sel_b, sel_r, sel_c]
             viewdirs = viewdirs_tr[sel_b, sel_r, sel_c]
+
+            img_ids = sel_b
         else:
             raise NotImplementedError
 
@@ -350,7 +355,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
             viewdirs = viewdirs.to(device)
 
         # volume rendering
-        render_result = model(rays_o, rays_d, viewdirs, global_step=global_step, **render_kwargs)
+        render_result = model(rays_o, rays_d, viewdirs, global_step=global_step, img_id=img_ids, **render_kwargs)
 
         # gradient descent step
         optimizer.zero_grad(set_to_none=True)
@@ -370,7 +375,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
         if cfg_train.weight_tv_k0>0 and global_step>cfg_train.tv_from and global_step%cfg_train.tv_every==0:
             loss += cfg_train.weight_tv_k0 * model.k0_total_variation()
         if model.adaptive_exposure:
-            loss += cfg_train.exposure_reg_offset*torch.mean(model.offsets**2) + cfg_train.exposure_reg_scale*torch.mean((model.scale-1)**2)
+            loss += cfg_train.exposure_reg_offset*torch.mean(model.offsets)**2 + cfg_train.exposure_reg_scale*torch.mean((model.scale-1)**2)
         loss.backward()
         optimizer.step()
         psnr_lst.append(psnr)

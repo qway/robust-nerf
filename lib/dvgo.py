@@ -1,3 +1,4 @@
+import itertools
 import os
 import time
 import functools
@@ -95,8 +96,8 @@ class DirectVoxGO(torch.nn.Module):
         if self.adaptive_exposure:
             if not self.num_images > 0:
                 raise IOError("Amount of Images not given, cant initialize adaptive exposure parameters")
-            self.offsets = torch.nn.Parameter(torch.zeros([self.num_images, 1]))
-            self.scale = torch.nn.Parameter(torch.ones([self.num_images, 3]))
+            self.register_parameter("offsets", torch.nn.Parameter(torch.zeros([self.num_images, 1, 1])))
+            self.register_parameter("scale", torch.nn.Parameter(torch.ones([self.num_images, 1, 3])))
         else:
             self.offsets = None
             self.scale = None
@@ -106,10 +107,15 @@ class DirectVoxGO(torch.nn.Module):
         self.mask_cache_path = mask_cache_path
         self.mask_cache_thres = mask_cache_thres
         if mask_cache_path is not None and mask_cache_path:
+
+            st = torch.load(mask_cache_path)
             self.mask_cache = MaskCache(
-                    path=mask_cache_path,
+                    st,
                     mask_cache_thres=mask_cache_thres).to(self.xyz_min.device)
             self._set_nonempty_mask()
+            if self.adaptive_exposure:
+                self.offsets = torch.nn.Parameter(torch.clone(st["model_state_dict"]["offsets"]))
+                self.scale = torch.nn.Parameter(torch.clone(st["model_state_dict"]["scale"]))
         else:
             self.mask_cache = None
             self.nonempty_mask = None
@@ -286,7 +292,7 @@ class DirectVoxGO(torch.nn.Module):
         mask_outbbox = mask_outbbox[...,None] | ((self.xyz_min>rays_pts) | (rays_pts>self.xyz_max)).any(dim=-1)
         return rays_pts, mask_outbbox
 
-    def forward(self, rays_o, rays_d, viewdirs, global_step=None, img_id=-1, **render_kwargs):
+    def forward(self, rays_o, rays_d, viewdirs, global_step=None, img_id=None, **render_kwargs):
         '''Volume rendering'''
 
         ret_dict = {}
@@ -354,7 +360,7 @@ class DirectVoxGO(torch.nn.Module):
                 rgb = rgb_logit
 
         # Adds trainable per image exposure compensation
-        if self.adaptive_exposure and img_id >= 0:
+        if self.adaptive_exposure and img_id is not None:
             rgb = rgb * self.scale[img_id] + self.offsets[img_id]
         rgb = torch.sigmoid(rgb)
 
@@ -381,9 +387,8 @@ class DirectVoxGO(torch.nn.Module):
 It supports query for the known free space and unknown space.
 '''
 class MaskCache(nn.Module):
-    def __init__(self, path, mask_cache_thres, ks=3):
+    def __init__(self, st, mask_cache_thres, ks=3):
         super().__init__()
-        st = torch.load(path)
         self.mask_cache_thres = mask_cache_thres
         self.register_buffer('xyz_min', torch.FloatTensor(st['MaskCache_kwargs']['xyz_min']))
         self.register_buffer('xyz_max', torch.FloatTensor(st['MaskCache_kwargs']['xyz_max']))
@@ -575,12 +580,13 @@ def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc
     eps_time = time.time()
     N = sum(im.shape[0] * im.shape[1] for im in rgb_tr_ori)
     rgb_tr = torch.zeros([N,3], device=DEVICE)
+    img_tr = torch.zeros([N], device=DEVICE, dtype=torch.long)
     rays_o_tr = torch.zeros_like(rgb_tr)
     rays_d_tr = torch.zeros_like(rgb_tr)
     viewdirs_tr = torch.zeros_like(rgb_tr)
     imsz = []
     top = 0
-    for c2w, img, (H, W), K in zip(train_poses, rgb_tr_ori, HW, Ks):
+    for c2w, img, (H, W), K, img_id in zip(train_poses, rgb_tr_ori, HW, Ks, itertools.count()):
         assert img.shape[:2] == (H, W)
         rays_o, rays_d, viewdirs = get_rays_of_a_view(
                 H=H, W=W, K=K, c2w=c2w, ndc=ndc,
@@ -596,6 +602,7 @@ def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc
         rays_o_tr[top:top+n].copy_(rays_o[mask].to(DEVICE))
         rays_d_tr[top:top+n].copy_(rays_d[mask].to(DEVICE))
         viewdirs_tr[top:top+n].copy_(viewdirs[mask].to(DEVICE))
+        img_tr[top:top+n] = img_id
         imsz.append(n)
         top += n
 
@@ -604,9 +611,10 @@ def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc
     rays_o_tr = rays_o_tr[:top]
     rays_d_tr = rays_d_tr[:top]
     viewdirs_tr = viewdirs_tr[:top]
+    img_tr = img_tr[:top]
     eps_time = time.time() - eps_time
     print('get_training_rays_in_maskcache_sampling: finish (eps time:', eps_time, 'sec)')
-    return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz
+    return rgb_tr, rays_o_tr, rays_d_tr, viewdirs_tr, imsz, img_tr
 
 
 def batch_indices_generator(N, BS):
