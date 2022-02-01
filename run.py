@@ -109,7 +109,7 @@ def sample_rays_random(H, W, images, i_train, shuffled_image_idx, shuffled_ray_i
 
     image_idx_curr_step_unique = np.unique(image_idx_curr_step)
     poses_unique = model.get_modified_poses(poses[image_idx_curr_step_unique], image_idx_curr_step_unique)
-    poses = torch.zeros((cfg_train.N_rand, *poses_unique[0].shape))
+    poses = torch.zeros((image_idx_curr_step.shape[0], *poses_unique[0].shape))
     for i, c2w in zip(image_idx_curr_step_unique, poses_unique):
         poses[image_idx_curr_step == i] = c2w
 
@@ -167,7 +167,7 @@ def sample_rays_in_maskcache(H, W, images, i_train, shuffled_image_idx, shuffled
 
         image_idx_curr_step_unique = np.unique(image_idx_curr_step)
         poses_unique = model.get_modified_poses(poses[image_idx_curr_step_unique], image_idx_curr_step_unique)
-        poses = torch.zeros((N_rand, *poses_unique[0].shape))
+        poses = torch.zeros((image_idx_curr_step.shape[0], *poses_unique[0].shape))
         for i, c2w in zip(image_idx_curr_step_unique, poses_unique):
             poses[image_idx_curr_step == i] = c2w
 
