@@ -94,8 +94,8 @@ def config_parser():
 
     return parser
 
-def sample_rays_random(H, W, images, i_train, shuffled_image_idx, shuffled_ray_idx, i_batch, poses, camera_model, args, cfg, cfg_train):
-    #image_idx_curr_step = shuffled_image_idx[i_batch:i_batch + args.N_rand]
+def sample_rays_random(H, W, images, i_train, shuffled_image_idx, shuffled_ray_idx, i_batch, poses, model, camera_model, args, cfg, cfg_train):
+    image_idx_curr_step = shuffled_image_idx[i_batch:i_batch + cfg_train.N_rand]
     h_list = shuffled_ray_idx[i_batch:i_batch + cfg_train.N_rand] % (H * W) // W
     w_list = shuffled_ray_idx[i_batch:i_batch + cfg_train.N_rand] % (H * W) % W
     
@@ -103,9 +103,15 @@ def sample_rays_random(H, W, images, i_train, shuffled_image_idx, shuffled_ray_i
     assert select_coords[:, 0].max() < W
     assert select_coords[:, 1].max() < H
     
-    '''image_idx_curr_step_tensor = torch.from_numpy(
+    image_idx_curr_step_tensor = torch.from_numpy(
         image_idx_curr_step
-    ).to(device)'''
+    ).to(device)
+
+    image_idx_curr_step_unique = np.unique(image_idx_curr_step)
+    poses_unique = model.get_modified_poses(poses[image_idx_curr_step_unique], image_idx_curr_step_unique)
+    poses = torch.zeros((cfg_train.N_rand, *poses_unique[0].shape))
+    for i, c2w in zip(image_idx_curr_step_unique, poses_unique):
+        poses[image_idx_curr_step == i] = c2w
 
     kps_list = torch.from_numpy(select_coords).cuda()
 
@@ -123,7 +129,7 @@ def sample_rays_random(H, W, images, i_train, shuffled_image_idx, shuffled_ray_i
                 H, 
                 W, 
                 camera_model, 
-                poses[index_train], 
+                poses, 
                 ndc=cfg.data.ndc, 
                 inverse_y=cfg.data.inverse_y,    
                 flip_x=cfg.data.flip_x, 
@@ -147,7 +153,7 @@ def sample_rays_in_maskcache(H, W, images, i_train, shuffled_image_idx, shuffled
     
     top = 0
     while top < N_rand:
-        #image_idx_curr_step = shuffled_image_idx[i_batch:i_batch + args.N_rand]
+        image_idx_curr_step = shuffled_image_idx[i_batch:i_batch + N_rand]
         h_list = shuffled_ray_idx[i_batch:i_batch + N_rand] % (H * W) // W
         w_list = shuffled_ray_idx[i_batch:i_batch + N_rand] % (H * W) % W
         
@@ -155,9 +161,16 @@ def sample_rays_in_maskcache(H, W, images, i_train, shuffled_image_idx, shuffled
         assert select_coords[:, 0].max() < W
         assert select_coords[:, 1].max() < H
         
-        '''image_idx_curr_step_tensor = torch.from_numpy(
+        image_idx_curr_step_tensor = torch.from_numpy(
             image_idx_curr_step
-        ).to(device)'''
+        ).to(device)
+
+        image_idx_curr_step_unique = np.unique(image_idx_curr_step)
+        poses_unique = model.get_modified_poses(poses[image_idx_curr_step_unique], image_idx_curr_step_unique)
+        poses = torch.zeros((N_rand, *poses_unique[0].shape))
+        for i, c2w in zip(image_idx_curr_step_unique, poses_unique):
+            poses[image_idx_curr_step == i] = c2w
+
 
         kps_list = torch.from_numpy(select_coords).cuda()
 
@@ -167,7 +180,7 @@ def sample_rays_in_maskcache(H, W, images, i_train, shuffled_image_idx, shuffled
             H, 
             W, 
             camera_model, 
-            poses[index_train], 
+            poses, 
             cfg.data.ndc, 
             cfg.data.inverse_y,    
             cfg.data.flip_x, 
@@ -435,6 +448,7 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
     num_voxels = model_kwargs.pop('num_voxels')
     if len(cfg_train.pg_scale) and reload_ckpt_path is None:
         num_voxels = int(num_voxels / (2**len(cfg_train.pg_scale)))
+    model_kwargs['len_data'] = len(i_train)
     model = dvgo.DirectVoxGO(
         xyz_min=xyz_min, xyz_max=xyz_max,
         num_voxels=num_voxels,
@@ -556,7 +570,8 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
                 shuffled_image_idx, 
                 shuffled_ray_idx, 
                 i_batch, 
-                poses, 
+                poses,
+                model, 
                 camera_model, 
                 args, 
                 cfg,
