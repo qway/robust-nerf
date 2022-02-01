@@ -166,9 +166,6 @@ def compute_bbox_by_cam_frustrm(args, cfg, HW, Ks, poses, i_train, near, far, **
     print('compute_bbox_by_cam_frustrm: start')
     xyz_min = torch.Tensor([np.inf, np.inf, np.inf])
     xyz_max = -xyz_min
-    print("^"*20)
-    print(poses.shape)
-    print(poses[i_train].shape)
     for (H, W), K, c2w in zip(HW[i_train], Ks[i_train], poses[i_train]):
         rays_o, rays_d, viewdirs = dvgo.get_rays_of_a_view(
                 H=H, W=W, K=K, c2w=c2w,
