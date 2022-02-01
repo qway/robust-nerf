@@ -633,7 +633,6 @@ def scene_rep_reconstruction(args, cfg, cfg_model, cfg_train, xyz_min, xyz_max, 
 
 
 def train(args, cfg, data_dict):
-
     # init
     print('train: start')
     eps_time = time.time()

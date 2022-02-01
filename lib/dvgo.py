@@ -711,7 +711,7 @@ def get_training_rays_flatten(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, f
 def get_training_rays_in_maskcache_sampling(rgb_tr_ori, train_poses, HW, Ks, ndc, inverse_y, flip_x, flip_y, model, render_kwargs):
     print('get_training_rays_in_maskcache_sampling: start')
     assert len(rgb_tr_ori) == len(train_poses) and len(rgb_tr_ori) == len(Ks) and len(rgb_tr_ori) == len(HW)
-    CHUNK = 64
+    CHUNK = 32
     DEVICE = rgb_tr_ori[0].device
     eps_time = time.time()
     N = sum(im.shape[0] * im.shape[1] for im in rgb_tr_ori)
